@@ -206,12 +206,12 @@ static Status attachProgramToCgroup(const char* programPath, const unique_fd& cg
     unique_fd cgroupProg(retrieveProgram(programPath));
     if (cgroupProg == -1) {
         int ret = errno;
-        ALOGE("Failed to get program from %s: %s", programPath, strerror(ret));
+        ALOGD("Failed to get program from %s: %s", programPath, strerror(ret));
         return statusFromErrno(ret, "cgroup program get failed");
     }
     if (android::bpf::attachProgram(type, cgroupProg, cgroupFd)) {
         int ret = errno;
-        ALOGE("Program from %s attach failed: %s", programPath, strerror(ret));
+        ALOGD("Program from %s attach failed: %s", programPath, strerror(ret));
         return statusFromErrno(ret, "program attach failed");
     }
     return netdutils::status::ok;
@@ -222,14 +222,14 @@ static Status initPrograms() {
 
     if (!CgroupGetControllerPath(CGROUPV2_CONTROLLER_NAME, &cg2_path)) {
          int ret = errno;
-         ALOGE("Failed to find cgroup v2 root");
+         ALOGD("Failed to find cgroup v2 root");
          return statusFromErrno(ret, "Failed to find cgroup v2 root");
     }
 
     unique_fd cg_fd(open(cg2_path.c_str(), O_DIRECTORY | O_RDONLY | O_CLOEXEC));
     if (cg_fd == -1) {
         int ret = errno;
-        ALOGE("Failed to open the cgroup directory: %s", strerror(ret));
+        ALOGD("Failed to open the cgroup directory: %s", strerror(ret));
         return statusFromErrno(ret, "Open the cgroup directory failed");
     }
     RETURN_IF_NOT_OK(attachProgramToCgroup(BPF_EGRESS_PROG_PATH, cg_fd, BPF_CGROUP_INET_EGRESS));
@@ -270,7 +270,7 @@ Status TrafficController::start() {
 
     auto result = makeSkDestroyListener();
     if (!isOk(result)) {
-        ALOGE("Unable to create SkDestroyListener: %s", toString(result).c_str());
+        ALOGD("Unable to create SkDestroyListener: %s", toString(result).c_str());
     } else {
         mSkDestroyListener = std::move(result.value());
     }
@@ -279,7 +279,7 @@ Status TrafficController::start() {
         std::lock_guard guard(mMutex);
         inet_diag_msg diagmsg = {};
         if (extract(msg, diagmsg) < sizeof(inet_diag_msg)) {
-            ALOGE("Unrecognized netlink message: %s", toString(msg).c_str());
+            ALOGD("Unrecognized netlink message: %s", toString(msg).c_str());
             return;
         }
         uint64_t sock_cookie = static_cast<uint64_t>(diagmsg.id.idiag_cookie[0]) |
@@ -287,7 +287,7 @@ Status TrafficController::start() {
 
         Status s = mCookieTagMap.deleteValue(sock_cookie);
         if (!isOk(s) && s.code() != ENOENT) {
-            ALOGE("Failed to delete cookie %" PRIx64 ": %s", sock_cookie, toString(s).c_str());
+            ALOGD("Failed to delete cookie %" PRIx64 ": %s", sock_cookie, toString(s).c_str());
             return;
         }
     };
@@ -333,12 +333,12 @@ int TrafficController::tagSocket(int sockFd, uint32_t tag, uid_t uid, uid_t call
     };
     auto configuration = mConfigurationMap.readValue(CURRENT_STATS_MAP_CONFIGURATION_KEY);
     if (!configuration.ok()) {
-        ALOGE("Failed to get current configuration: %s, fd: %d",
+        ALOGD("Failed to get current configuration: %s, fd: %d",
               strerror(configuration.error().code()), mConfigurationMap.getMap().get());
         return -configuration.error().code();
     }
     if (configuration.value() != SELECT_MAP_A && configuration.value() != SELECT_MAP_B) {
-        ALOGE("unknown configuration value: %d", configuration.value());
+        ALOGD("unknown configuration value: %d", configuration.value());
         return -EINVAL;
     }
 
@@ -346,14 +346,14 @@ int TrafficController::tagSocket(int sockFd, uint32_t tag, uid_t uid, uid_t call
             (configuration.value() == SELECT_MAP_A) ? mStatsMapA : mStatsMapB;
     base::Result<void> res = currentMap.iterate(countUidStatsEntries);
     if (!res.ok()) {
-        ALOGE("Failed to count the stats entry in map %d: %s", currentMap.getMap().get(),
+        ALOGD("Failed to count the stats entry in map %d: %s", currentMap.getMap().get(),
               strerror(res.error().code()));
         return -res.error().code();
     }
 
     if (totalEntryCount > mTotalUidStatsEntriesLimit ||
         perUidEntryCount > mPerUidStatsEntriesLimit) {
-        ALOGE("Too many stats entries in the map, total count: %u, uid(%u) count: %u, blocking tag"
+        ALOGD("Too many stats entries in the map, total count: %u, uid(%u) count: %u, blocking tag"
               " request to prevent map overflow",
               totalEntryCount, uid, perUidEntryCount);
         return -EMFILE;
@@ -365,7 +365,7 @@ int TrafficController::tagSocket(int sockFd, uint32_t tag, uid_t uid, uid_t call
     // should be fine to cocurrently update the map while eBPF program is running.
     res = mCookieTagMap.writeValue(sock_cookie, newKey, BPF_ANY);
     if (!res.ok()) {
-        ALOGE("Failed to tag the socket: %s, fd: %d", strerror(res.error().code()),
+        ALOGD("Failed to tag the socket: %s, fd: %d", strerror(res.error().code()),
               mCookieTagMap.getMap().get());
         return -res.error().code();
     }
@@ -379,7 +379,7 @@ int TrafficController::untagSocket(int sockFd) {
     if (sock_cookie == NONEXISTENT_COOKIE) return -errno;
     base::Result<void> res = mCookieTagMap.deleteValue(sock_cookie);
     if (!res.ok()) {
-        ALOGE("Failed to untag socket: %s\n", strerror(res.error().code()));
+        ALOGD("Failed to untag socket: %s\n", strerror(res.error().code()));
         return -res.error().code();
     }
     return 0;
@@ -398,14 +398,14 @@ int TrafficController::setCounterSet(int counterSetNum, uid_t uid, uid_t calling
         if (isOk(res) || (!isOk(res) && res.code() == ENOENT)) {
             return 0;
         } else {
-            ALOGE("Failed to delete the counterSet: %s\n", strerror(res.code()));
+            ALOGD("Failed to delete the counterSet: %s\n", strerror(res.code()));
             return -res.code();
         }
     }
     uint8_t tmpCounterSetNum = (uint8_t)counterSetNum;
     Status res = mUidCounterSetMap.writeValue(uid, tmpCounterSetNum, BPF_ANY);
     if (!isOk(res)) {
-        ALOGE("Failed to set the counterSet: %s, fd: %d", strerror(res.code()),
+        ALOGD("Failed to set the counterSet: %s, fd: %d", strerror(res.code()),
               mUidCounterSetMap.getMap().get());
         return -res.code();
     }
@@ -429,7 +429,7 @@ int TrafficController::deleteTagData(uint32_t tag, uid_t uid, uid_t callingUid) 
             if (res.ok() || (res.error().code() == ENOENT)) {
                 return base::Result<void>();
             }
-            ALOGE("Failed to delete data(cookie = %" PRIu64 "): %s\n", key,
+            ALOGD("Failed to delete data(cookie = %" PRIu64 "): %s\n", key,
                   strerror(res.error().code()));
         }
         // Move forward to next cookie in the map.
@@ -446,7 +446,7 @@ int TrafficController::deleteTagData(uint32_t tag, uid_t uid, uid_t callingUid) 
                 //Entry is deleted, use the current key to get a new nextKey;
                 return base::Result<void>();
             }
-            ALOGE("Failed to delete data(uid=%u, tag=%u): %s\n", key.uid, key.tag,
+            ALOGD("Failed to delete data(uid=%u, tag=%u): %s\n", key.uid, key.tag,
                   strerror(res.error().code()));
         }
         return base::Result<void>();
@@ -459,7 +459,7 @@ int TrafficController::deleteTagData(uint32_t tag, uid_t uid, uid_t callingUid) 
 
     auto res = mUidCounterSetMap.deleteValue(uid);
     if (!res.ok() && res.error().code() != ENOENT) {
-        ALOGE("Failed to delete counterSet data(uid=%u, tag=%u): %s\n", uid, tag,
+        ALOGD("Failed to delete counterSet data(uid=%u, tag=%u): %s\n", uid, tag,
               strerror(res.error().code()));
     }
 
@@ -470,7 +470,7 @@ int TrafficController::deleteTagData(uint32_t tag, uid_t uid, uid_t callingUid) 
             if (res.ok() || (res.error().code() == ENOENT)) {
                 return {};
             }
-            ALOGE("Failed to delete data(uid=%u): %s", key, strerror(res.error().code()));
+            ALOGD("Failed to delete data(uid=%u): %s", key, strerror(res.error().code()));
         }
         return {};
     };
@@ -481,14 +481,14 @@ int TrafficController::deleteTagData(uint32_t tag, uid_t uid, uid_t callingUid) 
 int TrafficController::addInterface(const char* name, uint32_t ifaceIndex) {
     IfaceValue iface;
     if (ifaceIndex == 0) {
-        ALOGE("Unknown interface %s(%d)", name, ifaceIndex);
+        ALOGD("Unknown interface %s(%d)", name, ifaceIndex);
         return -1;
     }
 
     strlcpy(iface.name, name, sizeof(IfaceValue));
     Status res = mIfaceIndexNameMap.writeValue(ifaceIndex, iface, BPF_ANY);
     if (!isOk(res)) {
-        ALOGE("Failed to add iface %s(%d): %s", name, ifaceIndex, strerror(res.code()));
+        ALOGD("Failed to add iface %s(%d): %s", name, ifaceIndex, strerror(res.code()));
         return -res.code();
     }
     return 0;
@@ -588,7 +588,7 @@ int TrafficController::changeUidOwnerRule(ChildChain chain, uid_t uid, FirewallR
             return -EINVAL;
     }
     if (!isOk(res)) {
-        ALOGE("change uid(%u) rule of %d failed: %s, rule: %d, type: %d", uid, chain,
+        ALOGD("change uid(%u) rule of %d failed: %s, rule: %d, type: %d", uid, chain,
               res.msg().c_str(), rule, type);
         return -res.code();
     }
@@ -661,11 +661,11 @@ int TrafficController::replaceUidOwnerMap(const std::string& name, bool isAllowl
     } else if (!name.compare(FirewallController::LOCAL_RESTRICTED)) {
         res = replaceRulesInMap(RESTRICTED_MATCH, uids);
     } else {
-        ALOGE("unknown chain name: %s", name.c_str());
+        ALOGD("unknown chain name: %s", name.c_str());
         return -EINVAL;
     }
     if (!isOk(res)) {
-        ALOGE("Failed to clean up chain: %s: %s", name.c_str(), res.msg().c_str());
+        ALOGD("Failed to clean up chain: %s: %s", name.c_str(), res.msg().c_str());
         return -res.code();
     }
     return 0;
@@ -676,7 +676,7 @@ int TrafficController::toggleUidOwnerMap(ChildChain chain, bool enable) {
     uint32_t key = UID_RULES_CONFIGURATION_KEY;
     auto oldConfiguration = mConfigurationMap.readValue(key);
     if (!oldConfiguration.ok()) {
-        ALOGE("Cannot read the old configuration from map: %s",
+        ALOGD("Cannot read the old configuration from map: %s",
               oldConfiguration.error().message().c_str());
         return -oldConfiguration.error().code();
     }
@@ -703,7 +703,7 @@ int TrafficController::toggleUidOwnerMap(ChildChain chain, bool enable) {
             enable ? (oldConfiguration.value() | match) : (oldConfiguration.value() & (~match));
     res = mConfigurationMap.writeValue(key, newConfiguration, BPF_EXIST);
     if (!isOk(res)) {
-        ALOGE("Failed to toggleUidOwnerMap(%d): %s", chain, res.msg().c_str());
+        ALOGD("Failed to toggleUidOwnerMap(%d): %s", chain, res.msg().c_str());
     }
     return -res.code();
 }
@@ -714,7 +714,7 @@ Status TrafficController::swapActiveStatsMap() {
     uint32_t key = CURRENT_STATS_MAP_CONFIGURATION_KEY;
     auto oldConfiguration = mConfigurationMap.readValue(key);
     if (!oldConfiguration.ok()) {
-        ALOGE("Cannot read the old configuration from map: %s",
+        ALOGD("Cannot read the old configuration from map: %s",
               oldConfiguration.error().message().c_str());
         return Status(oldConfiguration.error().code(), oldConfiguration.error().message());
     }
@@ -726,7 +726,7 @@ Status TrafficController::swapActiveStatsMap() {
     auto res = mConfigurationMap.writeValue(CURRENT_STATS_MAP_CONFIGURATION_KEY, newConfigure,
                                             BPF_EXIST);
     if (!res.ok()) {
-        ALOGE("Failed to toggle the stats map: %s", strerror(res.error().code()));
+        ALOGD("Failed to toggle the stats map: %s", strerror(res.error().code()));
         return res;
     }
     // After changing the config, we need to make sure all the current running
@@ -740,7 +740,7 @@ Status TrafficController::swapActiveStatsMap() {
     // userspace.
     int ret = synchronizeKernelRCU();
     if (ret) {
-        ALOGE("map swap synchronize_rcu() ended with failure: %s", strerror(-ret));
+        ALOGD("map swap synchronize_rcu() ended with failure: %s", strerror(-ret));
         return statusFromErrno(-ret, "map swap synchronize_rcu() failed");
     }
     return netdutils::status::ok;
@@ -755,7 +755,7 @@ void TrafficController::setPermissionForUids(int permission, const std::vector<u
             mPrivilegedUser.erase(uid);
             Status ret = mUidPermissionMap.deleteValue(uid);
             if (!isOk(ret) && ret.code() != ENOENT) {
-                ALOGE("Failed to clean up the permission for %u: %s", uid, strerror(ret.code()));
+                ALOGD("Failed to clean up the permission for %u: %s", uid, strerror(ret.code()));
             }
         }
         return;
@@ -775,13 +775,13 @@ void TrafficController::setPermissionForUids(int permission, const std::vector<u
         if (permission != INetd::PERMISSION_INTERNET) {
             Status ret = mUidPermissionMap.writeValue(uid, permission, BPF_ANY);
             if (!isOk(ret)) {
-                ALOGE("Failed to set permission: %s of uid(%u) to permission map: %s",
+                ALOGD("Failed to set permission: %s of uid(%u) to permission map: %s",
                       UidPermissionTypeToString(permission).c_str(), uid, strerror(ret.code()));
             }
         } else {
             Status ret = mUidPermissionMap.deleteValue(uid);
             if (!isOk(ret) && ret.code() != ENOENT) {
-                ALOGE("Failed to remove uid %u from permission map: %s", uid, strerror(ret.code()));
+                ALOGD("Failed to remove uid %u from permission map: %s", uid, strerror(ret.code()));
             }
         }
     }
